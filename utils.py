@@ -66,6 +66,51 @@ def arr_to_board(arr):
 
     return b
 
+def create_cae(x, filter_sizes):
+    num_filters = 20
+
+    prev_layer = x
+    for f in filter_sizes:
+        filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), f]))
+        b = tf.Variable(tf.zeros([f]))
+        conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
+
+        pool_out = tf.nn.max_pool(conv_out, [1,2,2,1], [1,2,2,1], 'SAME')
+        prev_layer = pool_out
+
+    encoded = pool_out
+
+    for f in reversed([6] + filter_sizes[1:]):
+        filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), f]))
+        b = tf.Variable(tf.zeros([f]))
+        conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
+
+        pool_out = UnPooling2x2ZeroFilled(conv_out)
+        prev_layer = pool_out
+
+    decoded = pool_out
+
+    return {
+        'encoded': encoded,
+        'decoded': decoded,
+        'cost' : tf.sqrt(tf.reduce_mean(tf.square(x - decoded)))
+    }
+
+# https://github.com/ppwwyyxx/tensorpack/blob/5c9174db6c0710e04665eb8918a2bf3ffa0d043b/tensorpack/models/pool.py#L77
+def UnPooling2x2ZeroFilled(x):
+    # https://github.com/tensorflow/tensorflow/issues/2169
+    out = tf.concat([x, tf.zeros_like(x)], 3)
+    out = tf.concat([out, tf.zeros_like(out)], 2)
+
+    sh = x.get_shape().as_list()
+    if None not in sh[1:]:
+        out_size = [-1, sh[1] * 2, sh[2] * 2, sh[3]]
+        return tf.reshape(out, out_size)
+    else:
+        shv = tf.shape(x)
+        ret = tf.reshape(out, tf.stack([-1, shv[1] * 2, shv[2] * 2, sh[3]]))
+    return ret
+
 def create(x, layer_sizes):
     # Build the encoding layers
     next_layer_input = x

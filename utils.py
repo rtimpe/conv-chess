@@ -83,36 +83,60 @@ def arr_to_board(arr):
 
     return b
 
-def create_cae(x, filter_sizes):
+# http://people.idsia.ch/~ciresan/data/icann2011.pdf
+def create_cae(x, architecture):
     num_filters = 20
 
     prev_layer = x
-    all_variables = []
-    for f in filter_sizes:
-        filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), f]))
-        b = tf.Variable(tf.zeros([f]))
-        all_variables.append(filters)
-        all_variables.append(b)
+    all_filters = []
+    all_biases = []
+    for layer in architecture:
+        # layer is int (filter size) or 'pool' (max pool layer)
+        if layer == 'pool':
+            pool_out = tf.nn.max_pool(prev_layer, [1,2,2,1], [1,2,2,1], 'SAME')
+            prev_layer = pool_out
+        else:
+            filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), layer]))
+            b = tf.Variable(tf.zeros([layer]))
+            all_filters.append(filters)
+            all_biases.append(b)
 
-        conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
+            conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
 
-        pool_out = tf.nn.max_pool(conv_out, [1,2,2,1], [1,2,2,1], 'SAME')
-        prev_layer = pool_out
+            prev_layer = conv_out
 
-    encoded = pool_out
+    encoded = prev_layer
+    print(encoded.get_shape())
 
-    for f in reversed([6] + filter_sizes[1:]):
-        filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), f]))
-        b = tf.Variable(tf.zeros([f]))
-        all_variables.append(filters)
-        all_variables.append(b)
+    i = len(all_filters) - 1
+    for layer in reversed(architecture):
+        # layer is int (filter size) or 'pool' (max pool layer)
+        if layer == 'pool':
+            pool_out = UnPooling2x2ZeroFilled(prev_layer)
+            prev_layer = pool_out
+        else:
+            filters = tf.transpose(all_filters[i], perm=[1, 0, 3, 2])
+            b = tf.Variable(tf.zeros([filters.get_shape()[3]]))
+            all_biases.append(b)
 
-        conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
+            conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
 
-        pool_out = UnPooling2x2ZeroFilled(conv_out)
-        prev_layer = pool_out
+            prev_layer = conv_out
+            i -= 1
 
-    decoded = pool_out
+    # add a special conv layer to get output to 8 x 8 x 6
+    filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), 6]))
+    b = tf.Variable(tf.zeros([6]))
+    all_filters.append(filters)
+    all_biases.append(b)
+
+    conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
+
+    decoded = conv_out
+
+    # initialize variables here.  not sure if this is the best place to do it?
+    # but good enough for now
+    init = tf.variables_initializer(all_filters + all_biases)
 
     return {
         'encoded': encoded,

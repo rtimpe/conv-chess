@@ -84,7 +84,7 @@ def arr_to_board(arr):
     return b
 
 # http://people.idsia.ch/~ciresan/data/icann2011.pdf
-def create_cae(x, architecture):
+def create_cae(x, architecture, fc_dim):
     num_filters = 20
 
     prev_layer = x
@@ -105,8 +105,23 @@ def create_cae(x, architecture):
 
             prev_layer = conv_out
 
-    encoded = prev_layer
-    print(encoded.get_shape())
+
+    # add a single fully connected layer
+    shape = prev_layer.get_shape()
+    fc_input_dim = int(shape[1] * shape[2] * shape[3])
+    fc_input = tf.reshape(prev_layer, [-1, fc_input_dim])
+    W = tf.Variable(tf.random_uniform([fc_input_dim, fc_dim], -1.0 / math.sqrt(fc_input_dim), 1.0 / math.sqrt(fc_input_dim)))
+    b1 = tf.Variable(tf.zeros([fc_dim]))
+
+    fc_output = tf.nn.tanh(tf.matmul(fc_input, W) + b1)
+
+    encoded = fc_output
+
+    # now transpose weights of fc layer to start decoding
+    b2 = tf.Variable(tf.zeros([fc_input_dim]))
+    fc_t_output = tf.nn.tanh(tf.matmul(encoded, tf.transpose(W)) + b2)
+
+    prev_layer = tf.reshape(fc_t_output, [-1, int(shape[1]), int(shape[2]), int(shape[3])])
 
     i = len(all_filters) - 1
     for layer in reversed(architecture):
@@ -136,7 +151,7 @@ def create_cae(x, architecture):
 
     # initialize variables here.  not sure if this is the best place to do it?
     # but good enough for now
-    init = tf.variables_initializer(all_filters + all_biases)
+    init = tf.variables_initializer(all_filters + all_biases + [W] + [b1] + [b2])
 
     return {
         'encoded': encoded,
@@ -228,8 +243,8 @@ def initialize_uninitialized(sess):
     if len(not_initialized_vars):
         sess.run(tf.variables_initializer(not_initialized_vars))
 
-def train(autoencoder, X, flatten, input_ph, sess, num_iters=20000, batch_size=100):
-    train_step = tf.train.AdamOptimizer(0.001).minimize(autoencoder['cost'])
+def train(autoencoder, X, flatten, input_ph, sess, num_iters=20000, batch_size=100, lr=.001):
+    train_step = tf.train.AdamOptimizer(lr).minimize(autoencoder['cost'])
 
     # initialize remaining variables (should just be variables from the optimizer)
     initialize_uninitialized(sess)

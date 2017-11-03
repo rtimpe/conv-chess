@@ -33,7 +33,7 @@ def load_boards_from_pgnf(fname, num_games=100):
 
 def board_to_arr(board):
     color_to_num = {chess.WHITE: 1, chess.BLACK: -1}
-    arr = np.zeros((8,8,6))
+    arr = np.zeros((8, 8, 6))
 
     for color in [True, False]:
         for piece in range(6):
@@ -74,12 +74,12 @@ def arr_to_board(arr):
 
     for i in range(8):
         for j in range(8):
-            b.remove_piece_at(chess.square(i,j))
-            piece = np.argmax(np.abs(quantized[i,j,:]))
-            if quantized[i,j,piece] == 1:
-                b.set_piece_at(chess.square(i,j), chess.Piece(piece + 1, True))
-            if quantized[i,j,piece] == -1:
-                b.set_piece_at(chess.square(i,j), chess.Piece(piece + 1, False))
+            b.remove_piece_at(chess.square(i, j))
+            piece = np.argmax(np.abs(quantized[i, j, :]))
+            if quantized[i, j, piece] == 1:
+                b.set_piece_at(chess.square(i, j), chess.Piece(piece + 1, True))
+            if quantized[i, j, piece] == -1:
+                b.set_piece_at(chess.square(i, j), chess.Piece(piece + 1, False))
 
     return b
 
@@ -93,7 +93,7 @@ def create_cae(x, architecture, fc_dim):
     for layer in architecture:
         # layer is int (filter size) or 'pool' (max pool layer)
         if layer == 'pool':
-            pool_out = tf.nn.max_pool(prev_layer, [1,2,2,1], [1,2,2,1], 'SAME')
+            pool_out = tf.nn.max_pool(prev_layer, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME')
             prev_layer = pool_out
         else:
             filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), layer]))
@@ -101,7 +101,7 @@ def create_cae(x, architecture, fc_dim):
             all_filters.append(filters)
             all_biases.append(b)
 
-            conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
+            conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1, 1, 1, 1], "SAME") + b)
 
             prev_layer = conv_out
 
@@ -134,7 +134,7 @@ def create_cae(x, architecture, fc_dim):
             b = tf.Variable(tf.zeros([filters.get_shape()[3]]))
             all_biases.append(b)
 
-            conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
+            conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1, 1, 1, 1], "SAME") + b)
 
             prev_layer = conv_out
             i -= 1
@@ -145,7 +145,7 @@ def create_cae(x, architecture, fc_dim):
     all_filters.append(filters)
     all_biases.append(b)
 
-    conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1,1,1,1], "SAME") + b)
+    conv_out = tf.nn.tanh(tf.nn.conv2d(prev_layer, filters, [1, 1, 1, 1], "SAME") + b)
 
     decoded = conv_out
 
@@ -196,7 +196,7 @@ def create_fully_connected(x, layer_sizes, sess):
         all_variables.append(W)
         all_variables.append(b)
 
-        output = tf.nn.tanh(tf.matmul(next_layer_input,W) + b)
+        output = tf.nn.tanh(tf.matmul(next_layer_input, W) + b)
 
         # the input into the next layer is the output of this layer
         next_layer_input = output
@@ -209,11 +209,11 @@ def create_fully_connected(x, layer_sizes, sess):
     encoding_matrices.reverse()
 
 
-    for i, dim in enumerate(layer_sizes[1:] + [ int(x.get_shape()[1])]) :
+    for i, dim in enumerate(layer_sizes[1:] + [int(x.get_shape()[1])]):
         # we are using tied weights, so just lookup the encoding matrix for this step and transpose it
         W = tf.transpose(encoding_matrices[i])
         b = tf.Variable(tf.zeros([dim]))
-        output = tf.nn.tanh(tf.matmul(next_layer_input,W) + b)
+        output = tf.nn.tanh(tf.matmul(next_layer_input, W) + b)
         next_layer_input = output
 
         all_variables.append(b)
@@ -235,8 +235,8 @@ def create_fully_connected(x, layer_sizes, sess):
 
 # https://stackoverflow.com/questions/35164529/in-tensorflow-is-there-any-way-to-just-initialize-uninitialised-variables#35618160
 def initialize_uninitialized(sess):
-    global_vars          = tf.global_variables()
-    is_not_initialized   = sess.run([tf.is_variable_initialized(var) for var in global_vars])
+    global_vars = tf.global_variables()
+    is_not_initialized = sess.run([tf.is_variable_initialized(var) for var in global_vars])
     not_initialized_vars = [v for (v, f) in zip(global_vars, is_not_initialized) if not f]
 
     # print [str(i.name) for i in not_initialized_vars] # only for testing
@@ -255,7 +255,7 @@ def train(autoencoder, X, flatten, input_ph, sess, num_iters=20000, batch_size=1
         inds = np.random.choice(X.shape[0], batch_size)
         X_batch = X[inds]
         if flatten:
-           X_batch = np.reshape(X_batch, (batch_size, -1))
+            X_batch = np.reshape(X_batch, (batch_size, -1))
         sess.run(train_step, feed_dict={input_ph: X_batch})
         if i % 1000 == 0:
             print(i, " cost", sess.run(autoencoder['cost'], feed_dict={input_ph: X_batch}))

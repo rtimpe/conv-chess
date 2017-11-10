@@ -1,6 +1,7 @@
 import chess
 import chess.pgn
 import math
+import pystockfish
 
 import numpy as np
 import tensorflow as tf
@@ -21,15 +22,58 @@ def load_boards_from_pgnf(fname, num_games=100):
             game = chess.pgn.read_game(pgnf)
             boards = get_boards_from_game(game)
             for board in boards:
-                arr = board_to_arr(board)
                 board_fen = board.board_fen()
                 # since we're reading board positions from actual games, there
                 # will be many duplicate positions.  ignore them to keep the
                 # training data unbiased
                 if board_fen not in seen_boards:
-                    seen_boards[board_fen] = arr
-        X = np.array(list(seen_boards.values()))
-    return X
+                    seen_boards[board_fen] = board.fen()
+        # X = np.array(list(seen_boards.values()))
+    return list(seen_boards.values())
+
+def flip_boards(boards):
+    # boards should be N x 8 x 8 x 6
+    return -1 * np.flip(np.flip(boards, axis=1), axis=2)
+
+def flip_board(board):
+    return -1 * np.flip(np.flip(board, axis=0), axis=1)
+
+def fens_to_arrs(fens):
+    arrs = []
+    for fen in fens:
+        board = chess.Board(fen=fen)
+        arrs.append(board_to_arr(board))
+
+    return np.array(arrs)
+
+def convert_and_normalize(fens_and_scores):
+    boards = []
+    scores = []
+    for fen, score in fens_and_scores:
+        board = chess.Board(fen=fen)
+        if board.turn == chess.WHITE:
+            boards.append(board_to_arr(board))
+            scores.append(score)
+        else:
+            boards.append(flip_board(board_to_arr(board)))
+            scores.append(-1 * score)
+
+    return np.array(boards), np.array(scores)
+
+def score_fens(fens):
+    eng = pystockfish.Engine(depth=10)
+    data = []
+    for fen in fens:
+        # pystockfish is a bit buggy.  for now, just ignore boards it can't parse
+        # FIXME at some point
+        try:
+            eng.setfenposition(fen)
+            result = eng.bestmove()
+            score = result['info']['score']['value']
+            data.append((fen, score))
+        except:
+            pass
+    return data
 
 def board_to_arr(board):
     color_to_num = {chess.WHITE: 1, chess.BLACK: -1}
@@ -82,6 +126,46 @@ def arr_to_board(arr):
                 b.set_piece_at(chess.square(i, j), chess.Piece(piece + 1, False))
 
     return b
+
+def create_cnn(x, y, architecture, fc_dim):
+    num_filters = 20
+
+    prev_layer = x
+    params = []
+    for layer in architecture:
+        # layer is int (filter size) or 'pool' (max pool layer)
+        if layer == 'pool':
+            pool_out = tf.nn.max_pool(prev_layer, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME')
+            prev_layer = pool_out
+        else:
+            filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), layer]))
+            b = tf.Variable(tf.zeros([layer]))
+            params.append(filters)
+            params.append(b)
+
+            conv_out = tf.nn.relu(tf.nn.conv2d(prev_layer, filters, [1, 1, 1, 1], "SAME") + b)
+
+            prev_layer = conv_out
+
+
+    # add a two connected layers
+    shape = prev_layer.get_shape()
+    fc_input_dim = int(shape[1] * shape[2] * shape[3])
+    fc_input = tf.reshape(prev_layer, [-1, fc_input_dim])
+    W = tf.Variable(tf.random_uniform([fc_input_dim, fc_dim], -1.0 / math.sqrt(fc_input_dim), 1.0 / math.sqrt(fc_input_dim)))
+    b = tf.Variable(tf.zeros([fc_dim]))
+
+    fc_output = tf.nn.relu(tf.matmul(fc_input, W) + b)
+
+    W = tf.Variable(tf.random_uniform([fc_dim, 1], -1.0 / math.sqrt(fc_dim), 1.0 / math.sqrt(fc_dim)))
+    b = tf.Variable(tf.zeros([1]))
+
+    score = tf.matmul(fc_output, W) + b
+
+    return {
+        'score': score,
+        'cost': tf.reduce_mean(tf.square(score - y))
+    }
 
 # http://people.idsia.ch/~ciresan/data/icann2011.pdf
 def create_cae(x, architecture, fc_dim):
@@ -259,3 +343,19 @@ def train(autoencoder, X, flatten, input_ph, sess, num_iters=20000, batch_size=1
         sess.run(train_step, feed_dict={input_ph: X_batch})
         if i % 1000 == 0:
             print(i, " cost", sess.run(autoencoder['cost'], feed_dict={input_ph: X_batch}))
+
+def train_labeled(cnn, X, y, input_ph, label_ph, sess, num_iters=20000, batch_size=100, lr=.0001):
+    train_step = tf.train.AdamOptimizer(lr).minimize(cnn['cost'])
+
+    # initialize remaining variables (should just be variables from the optimizer)
+    initialize_uninitialized(sess)
+
+    for i in range(num_iters):
+        inds = np.random.choice(X.shape[0], batch_size)
+        X_batch = X[inds]
+        y_batch = y[inds, np.newaxis]
+
+        sess.run(train_step, feed_dict={input_ph: X_batch, label_ph: y_batch})
+        if i % 1000 == 0:
+            print(i, " cost", sess.run(cnn['cost'], feed_dict=
+                                       {input_ph: X_batch, label_ph: y_batch}))

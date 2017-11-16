@@ -127,7 +127,7 @@ def arr_to_board(arr):
 
     return b
 
-def create_cnn(x, y, architecture, fc_dim):
+def create_cnn(x, y, architecture, fc_dim, sess):
     num_filters = 20
 
     prev_layer = x
@@ -161,6 +161,9 @@ def create_cnn(x, y, architecture, fc_dim):
     b = tf.Variable(tf.zeros([1]))
 
     score = tf.matmul(fc_output, W) + b
+
+    init = tf.variables_initializer(params)
+    sess.run(init)
 
     return {
         'score': score,

@@ -5,6 +5,7 @@ import pystockfish
 
 import numpy as np
 import tensorflow as tf
+import tensorflow.contrib.slim.nets as nets
 
 def get_boards_from_game(game):
     boards = []
@@ -127,23 +128,62 @@ def arr_to_board(arr):
 
     return b
 
-def create_cnn(x, y, architecture, fc_dim, sess):
-    num_filters = 20
+def conv_layer(i, in_size, out_size, input_layer):
+    with tf.variable_scope('conv_layer_' + str(i)):
+        # input_layer = tf.layers.batch_normalization(input_layer, training=True)
 
+        initializer = tf.contrib.layers.xavier_initializer()
+        filters = tf.Variable(initializer([3, 3, int(in_size), out_size]), name='filters', dtype=tf.float32)
+        # filters = tf.get_variable('filters', shape=[3, 3, in_size, out_size], initializer=tf.contrib.layers.xavier_initializer())#tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), layer]))
+        tf.summary.histogram('filters', filters)
+        b = tf.Variable(tf.zeros([out_size]))
+        tf.summary.histogram('biases_', b)
+
+        conv_out = tf.nn.relu(tf.nn.conv2d(input_layer, filters, [1, 1, 1, 1], "SAME") + b)
+
+        conv_out = tf.layers.batch_normalization(conv_out, training=True)
+
+        tf.summary.histogram('activations', conv_out)
+
+    return [filters, b], conv_out
+
+
+def make_resnet(x, y, sess):
+    resnet_out, _ = nets.resnet_v2.resnet_v2_50(x)
+    initializer = tf.contrib.layers.xavier_initializer()
+    W = tf.Variable(initializer([2048, 1]), name='fc_weights1')
+    b = tf.Variable(tf.zeros([1]))
+    score = tf.matmul(tf.squeeze(resnet_out), W) + b
+
+    tf.summary.histogram('score', score)
+
+    sess.run(tf.global_variables_initializer())
+    return {
+        'score': score,
+        'cost': tf.reduce_mean(tf.square(score - y))
+    }
+
+def create_cnn(x, y, architecture, fc_dim, sess):
     prev_layer = x
     params = []
-    for layer in architecture:
+    for (i, layer) in enumerate(architecture):
         # layer is int (filter size) or 'pool' (max pool layer)
         if layer == 'pool':
-            pool_out = tf.nn.max_pool(prev_layer, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME')
+            pool_out = tf.nn.max_pool(prev_layer, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME', name='layer_' + str(i))
             prev_layer = pool_out
         else:
-            filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), layer]))
-            b = tf.Variable(tf.zeros([layer]))
-            params.append(filters)
-            params.append(b)
+            # filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), layer]))
+            # tf.summary.histogram('filters_' + str(i), filters)
+            # b = tf.Variable(tf.zeros([layer]))
+            # tf.summary.histogram('biases_' + str(i), b)
+            # params.append(filters)
+            # params.append(b)
 
-            conv_out = tf.nn.relu(tf.nn.conv2d(prev_layer, filters, [1, 1, 1, 1], "SAME") + b)
+            # conv_out = tf.nn.relu(tf.nn.conv2d(prev_layer, filters, [1, 1, 1, 1], "SAME") + b, name='layer_' + str(i))
+
+            p, conv_out = conv_layer(i, prev_layer.get_shape()[3], layer, prev_layer)
+            # params.append(p)
+            params += p
 
             prev_layer = conv_out
 
@@ -152,15 +192,24 @@ def create_cnn(x, y, architecture, fc_dim, sess):
     shape = prev_layer.get_shape()
     fc_input_dim = int(shape[1] * shape[2] * shape[3])
     fc_input = tf.reshape(prev_layer, [-1, fc_input_dim])
-    W = tf.Variable(tf.random_uniform([fc_input_dim, fc_dim], -1.0 / math.sqrt(fc_input_dim), 1.0 / math.sqrt(fc_input_dim)))
+    initializer = tf.contrib.layers.xavier_initializer()
+    W = tf.Variable(initializer([fc_input_dim, fc_dim]), name='fc_weights1')
     b = tf.Variable(tf.zeros([fc_dim]))
+    params.append(W)
+    params.append(b)
 
     fc_output = tf.nn.relu(tf.matmul(fc_input, W) + b)
+    tf.summary.histogram('fc_activations', fc_output)
 
-    W = tf.Variable(tf.random_uniform([fc_dim, 1], -1.0 / math.sqrt(fc_dim), 1.0 / math.sqrt(fc_dim)))
+    W = tf.Variable(initializer([fc_dim, 1]), name='fc_weights2')
     b = tf.Variable(tf.zeros([1]))
+    params.append(W)
+    params.append(b)
+
+    tf.summary.histogram('fc_weights2', W)
 
     score = tf.matmul(fc_output, W) + b
+    tf.summary.histogram('scores', score)
 
     init = tf.variables_initializer(params)
     sess.run(init)
@@ -350,7 +399,11 @@ def train(autoencoder, X, flatten, input_ph, sess, num_iters=20000, batch_size=1
 def train_labeled(cnn, X, y, input_ph, label_ph, sess, num_iters=20000, batch_size=100, lr=.0001):
     train_step = tf.train.AdamOptimizer(lr).minimize(cnn['cost'])
 
+    merged = tf.summary.merge_all()
+    writer = tf.summary.FileWriter('summaries', sess.graph)
+
     # initialize remaining variables (should just be variables from the optimizer)
+    print(sess.run(tf.report_uninitialized_variables()))
     initialize_uninitialized(sess)
 
     for i in range(num_iters):
@@ -359,6 +412,12 @@ def train_labeled(cnn, X, y, input_ph, label_ph, sess, num_iters=20000, batch_si
         y_batch = y[inds, np.newaxis]
 
         sess.run(train_step, feed_dict={input_ph: X_batch, label_ph: y_batch})
+
+        # if i % 500 == 0:
+        #     print(sorted(inds))
+
         if i % 1000 == 0:
-            print(i, " cost", sess.run(cnn['cost'], feed_dict=
-                                       {input_ph: X_batch, label_ph: y_batch}))
+            summary, cost = sess.run([merged, cnn['cost']], feed_dict=
+                                     {input_ph: X_batch, label_ph: y_batch})
+            print(i, " cost", cost)
+            writer.add_summary(summary, i)

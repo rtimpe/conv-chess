@@ -145,6 +145,10 @@ def conv_layer(i, in_size, out_size, input_layer):
 
         tf.summary.histogram('activations', conv_out)
 
+        # mean, var = tf.nn.moments(conv_out, [0])
+        # tf.summary.scalar('activation_mean', mean)
+        # tf.summary.scalar('activation_var', var)
+
     return [filters, b], conv_out
 
 
@@ -214,9 +218,12 @@ def create_cnn(x, y, architecture, fc_dim, sess):
     init = tf.variables_initializer(params)
     sess.run(init)
 
+    cost = tf.reduce_mean(tf.square(score - y))
+    tf.summary.scalar('cost', cost)
+
     return {
         'score': score,
-        'cost': tf.reduce_mean(tf.square(score - y))
+        'cost': cost
     }
 
 # http://people.idsia.ch/~ciresan/data/icann2011.pdf
@@ -396,7 +403,7 @@ def train(autoencoder, X, flatten, input_ph, sess, num_iters=20000, batch_size=1
         if i % 1000 == 0:
             print(i, " cost", sess.run(autoencoder['cost'], feed_dict={input_ph: X_batch}))
 
-def train_labeled(cnn, X, y, input_ph, label_ph, sess, num_iters=20000, batch_size=100, lr=.0001):
+def train_labeled(cnn, X, y, input_ph, label_ph, sess, X_eval=None, y_eval=None, num_iters=20000, batch_size=100, lr=.0001):
     train_step = tf.train.AdamOptimizer(lr).minimize(cnn['cost'])
 
     merged = tf.summary.merge_all()
@@ -421,3 +428,6 @@ def train_labeled(cnn, X, y, input_ph, label_ph, sess, num_iters=20000, batch_si
                                      {input_ph: X_batch, label_ph: y_batch})
             print(i, " cost", cost)
             writer.add_summary(summary, i)
+            if X_eval is not None:
+                cost = sess.run(cnn['cost'], feed_dict={input_ph: X_eval, label_ph: y_eval[:, np.newaxis]})
+                print("eval cost", cost)

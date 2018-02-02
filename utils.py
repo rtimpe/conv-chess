@@ -167,14 +167,15 @@ def make_resnet(x, y, sess):
         'cost': tf.reduce_mean(tf.square(score - y))
     }
 
-def create_cnn(x, y, architecture, fc_dim, sess):
+def create_cnn(x, y, architecture, fc_dim, sess, dropout_prob=.5):
     prev_layer = x
     params = []
     for (i, layer) in enumerate(architecture):
         # layer is int (filter size) or 'pool' (max pool layer)
         if layer == 'pool':
             pool_out = tf.nn.max_pool(prev_layer, [1, 2, 2, 1], [1, 2, 2, 1], 'SAME', name='layer_' + str(i))
-            prev_layer = pool_out
+            dropout = np.nn.dropout(pool_out, dropout_prob)
+            prev_layer = dropout
         else:
             # filters = tf.Variable(tf.random_uniform([3, 3, int(prev_layer.get_shape()[3]), layer]))
             # tf.summary.histogram('filters_' + str(i), filters)
